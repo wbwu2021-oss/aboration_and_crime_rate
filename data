@@ -1,1 +1,75 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
+```{r}
+library(readr)
+
+crime_data <- read_csv(file.choose())
+```
+```{r}
+View(crime_data)
+```
+
+```{r}
+library(tidyverse)
+
+crime_clean <- crime_data %>%
+  arrange(Year) %>%
+  distinct(Year, .keep_all = TRUE) %>%
+  mutate(
+    Year = as.integer(Year),
+    Population = as.numeric(Population),
+
+    # Crime rates per 100,000 people
+    total_crime_rate = Total / Population * 100000,
+    violent_crime_rate = Violent / Population * 100000,
+    property_crime_rate = Property / Population * 100000,
+    murder_rate = Murder / Population * 100000,
+    rape_rate = Forcible_Rape / Population * 100000,
+    robbery_rate = Robbery / Population * 100000,
+    aggravated_assault_rate = Aggravated_assault / Population * 100000,
+
+    # Period indicator
+    post_1973 = if_else(Year >= 1973, 1, 0),
+
+    # Time centered around legalization
+    years_since_1973 = Year - 1973
+  )
+```
+
+```{r}
+View(crime_clean)
+summary(crime_clean)
+```
+
+```{r}
+colSums(is.na(crime_clean))
+```
+
+```{r}
+crime_clean %>%
+  count(Year) %>%
+  filter(n > 1)
+```
+
+```{r}
+crime_clean %>%
+  summarise(
+    total_check = max(abs(Total - (Violent + Property))),
+    violent_check = max(abs(Violent -
+      (Murder + Forcible_Rape + Robbery + Aggravated_assault)))
+  )
+```
+
+```{r}
+ggplot(crime_clean, aes(x = Year, y = violent_crime_rate)) +
+  geom_line() +
+  geom_vline(xintercept = 1973, linetype = "dashed", color = "red") +
+  labs(
+    title = "U.S. Violent Crime Rate, 1960–2014",
+    x = "Year",
+    y = "Violent crimes per 100,000 people"
+  ) +
+  theme_minimal()
+```
