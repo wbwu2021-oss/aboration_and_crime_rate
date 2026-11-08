@@ -1,4 +1,6 @@
 
+/* https://docs.google.com/spreadsheets/d/1EoVH6m2C-IcWJrbHeLa_OPkEV76oT7WofdE9r5bHIac/export?format=csv*/
+/*Download file, import into sas and change the datafile ' ' to your path*/
 /*National and State Pregnancy dataset*/
 proc import datafile='/home/u64580526/STAT520/NationalAndStatePregnancy_PublicUse.csv'
     out=abortions
