@@ -40,7 +40,7 @@ run;
 data crimes_clean;
     length state $2. year 8;
     set crime_rates(rename=(state=orig_state));
-    if 1985 <= year <=2020;
+    where 1985 <= year <=2020;
 
     select (strip(orig_state));
         when ('Alabama')              state = 'AL';
