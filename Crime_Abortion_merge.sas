@@ -118,7 +118,7 @@ run;
 
 data merged_data;
     merge abortions_clean(in=a)
-          crimes_clean(in=b rename=(year=year));
+          crimes_clean(in=b);
     by state year;
     if b;
 
@@ -137,7 +137,7 @@ order by state, year;
 quit;
 
 proc freq data=merged_data;
-    tables crime_year;
+    tables year;
 run;
 
 
