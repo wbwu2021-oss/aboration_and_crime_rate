@@ -1,4 +1,6 @@
 
+/* https://docs.google.com/spreadsheets/d/1EoVH6m2C-IcWJrbHeLa_OPkEV76oT7WofdE9r5bHIac/export?format=csv*/
+/*Download file, import into sas and change the datafile ' ' to your path*/
 
 /*This code clans the fertility and crime data sets so that the data can be merged.
 Code shows data from 1985 to 2019 that is present in both data sets.*/
