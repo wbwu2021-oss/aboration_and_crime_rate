@@ -1,0 +1,56 @@
+%let lag_years = 18;
+
+/* National and State Pregnancy dataset */
+proc import datafile='/home/u64580231/Stat520/NationalAndStatePregnancy_PublicUse.csv'
+    out=abortions
+    dbms=csv
+    replace;
+    guessingrows=max;
+    getnames=yes;
+run;
+
+/* State Crime dataset */
+proc import datafile='/home/u64580231/Stat520/state_crime.csv'
+    out=crimes
+    dbms=csv
+    replace;
+    getnames=yes;
+    guessingrows=max;
+run;
+
+
+data abortions_us;
+    set abortions_clean;
+    where state = 'US';
+run;
+
+/* National crime series */
+data crimes_us;
+    set crimes_clean;
+    where state = 'US';
+run;
+
+proc sort data=abortions_us; by year; run;
+proc sort data=crimes_us;    by year; run;
+
+/* Merge on year, keeping only years present in both */
+data merged_us;
+    merge abortions_us(in=a)
+          crimes_us(in=b);
+    by year;
+    if a and b;
+run;
+
+/* Check the overlap: with a 20-year lag expect crime years 1993-2019 */
+proc means data=merged_us n nmiss min max;
+    var year abortionratetotal_100k total_crime_rate;
+run;
+
+proc print data=merged_us;
+    var year cohort_year abortionstotal population1544
+        abortionratetotal_100k total_crime total_crime_rate;
+run;
+
+proc corr data=merged_us pearson spearman;
+    var abortionratetotal_100k total_crime_rate;
+run;
