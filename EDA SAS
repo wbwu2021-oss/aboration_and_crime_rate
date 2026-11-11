@@ -1,0 +1,390 @@
+
+%let lag_years = 18;
+
+/* National and State Pregnancy dataset */
+proc import datafile='/home/u64580231/Stat520/NationalAndStatePregnancy_PublicUse.csv'
+    out=abortions
+    dbms=csv
+    replace;
+    guessingrows=max;
+    getnames=yes;
+run;
+
+/* State Crime dataset */
+proc import datafile='/home/u64580231/Stat520/state_crime.csv'
+    out=crimes
+    dbms=csv
+    replace;
+    getnames=yes;
+    guessingrows=max;
+run;
+
+/* proc contents data=crimes varnum; 
+run; */
+
+/* Restrict time period and shift abortion year forward by the lag */
+data abortions_clean;
+    set abortions;
+    where (1985 - &lag_years.) <= year <= (2020 - &lag_years.);
+    cohort_year = year;
+
+    if population1544 > 0 then
+        abortionratetotal_100k = (abortionstotal / population1544) * 100000;
+
+    state = upcase(strip(state));
+    year  = year + &lag_years.;
+run;
+
+/* Crime rates are already per 100k */
+data crime_rates;
+    set crimes;
+    total_crime      = Data.Totals.Property.All + Data.Totals.Violent.All;
+    total_crime_rate = Data.Rates.Property.All  + Data.Rates.Violent.All;
+run;
+
+/* Convert year to numeric, map state names to postal codes */
+data crimes_clean;
+    length state $2 year 8 orig_state_clean $50;
+    set crime_rates(rename=(state=orig_state year=orig_year));
+
+    year = input(strip(orig_year), 8.);
+    if 1985 <= year <= 2020;
+
+    orig_state_clean = strip(orig_state);
+    select (orig_state_clean);
+        when ('Alabama')              state = 'AL';
+        when ('Alaska')               state = 'AK';
+        when ('Arizona')              state = 'AZ';
+        when ('Arkansas')             state = 'AR';
+        when ('California')           state = 'CA';
+        when ('Colorado')             state = 'CO';
+        when ('Connecticut')          state = 'CT';
+        when ('Delaware')             state = 'DE';
+        when ('District of Columbia') state = 'DC';
+        when ('Florida')              state = 'FL';
+        when ('Georgia')              state = 'GA';
+        when ('Hawaii')               state = 'HI';
+        when ('Idaho')                state = 'ID';
+        when ('Illinois')             state = 'IL';
+        when ('Indiana')              state = 'IN';
+        when ('Iowa')                 state = 'IA';
+        when ('Kansas')               state = 'KS';
+        when ('Kentucky')             state = 'KY';
+        when ('Louisiana')            state = 'LA';
+        when ('Maine')                state = 'ME';
+        when ('Maryland')             state = 'MD';
+        when ('Massachusetts')        state = 'MA';
+        when ('Michigan')             state = 'MI';
+        when ('Minnesota')            state = 'MN';
+        when ('Mississippi')          state = 'MS';
+        when ('Missouri')             state = 'MO';
+        when ('Montana')              state = 'MT';
+        when ('Nebraska')             state = 'NE';
+        when ('Nevada')               state = 'NV';
+        when ('New Hampshire')        state = 'NH';
+        when ('New Jersey')           state = 'NJ';
+        when ('New Mexico')           state = 'NM';
+        when ('New York')             state = 'NY';
+        when ('North Carolina')       state = 'NC';
+        when ('North Dakota')         state = 'ND';
+        when ('Ohio')                 state = 'OH';
+        when ('Oklahoma')             state = 'OK';
+        when ('Oregon')               state = 'OR';
+        when ('Pennsylvania')         state = 'PA';
+        when ('Rhode Island')         state = 'RI';
+        when ('South Carolina')       state = 'SC';
+        when ('South Dakota')         state = 'SD';
+        when ('Tennessee')            state = 'TN';
+        when ('Texas')                state = 'TX';
+        when ('Utah')                 state = 'UT';
+        when ('United States')        state = 'US';
+        when ('Vermont')              state = 'VT';
+        when ('Virginia')             state = 'VA';
+        when ('Washington')           state = 'WA';
+        when ('West Virginia')        state = 'WV';
+        when ('Wisconsin')            state = 'WI';
+        when ('Wyoming')              state = 'WY';
+        otherwise                     state = '??';
+    end;
+
+    drop orig_state orig_state_clean orig_year;
+run;
+
+/* Check for unmatched state names (should show no '??') */
+proc freq data=crimes_clean;
+    tables state / missing;
+run;
+
+proc sort data=abortions_clean;
+    by state year;
+run;
+
+proc sort data=crimes_clean;
+    by state year;
+run;
+
+proc means data=abortions_clean n nmiss mean std min max maxdec=2;
+    var abortionratetotal_100k;
+run;
+
+proc means data=crimes_clean n nmiss mean std min max maxdec=2;
+    var total_crime_rate;
+run;
+
+/* Merge */
+data merged_data;
+    merge abortions_clean(in=a)
+          crimes_clean(in=b);
+    by state year;
+    if b;
+    if missing(abortionratetotal_100k) then missing_abortion = 1;
+    else missing_abortion = 0;
+run;
+
+/* Confirm the merge matched by state */
+proc freq data=merged_data;
+    tables state * missing_abortion / norow nocol nopercent;
+run;
+
+proc means data=merged_data mean median std min max q1 q3;
+    var abortionratetotal abortionratetotal_100k total_crime_rate;
+run;
+
+proc freq data=merged_data;
+    tables year;
+run;
+
+/*
+proc sql;
+    select state,
+           cohort_year as abortion_original_year,
+           year as crime_observation_year,
+           &lag_years. as applied_time_lag,
+           total_crime, total_crime_rate,
+           'Data.Rates.Property.All'n, 'Data.Rates.Violent.All'n,
+           abortionratetotal_100k, abortionstotal, abortionratetotal,
+           birthstotal, birthratetotal,
+           pregnanciestotal, pregnancyratetotal,
+           population1544
+    from merged_data
+    where state in ('CA', 'TX')
+    order by state, year;
+quit; */
+
+proc sql;
+    select state,
+           cohort_year as abortion_original_year,
+           year as crime_observation_year,
+           &lag_years. as applied_time_lag,
+           total_crime, total_crime_rate,
+           'Data.Rates.Property.All'n, 'Data.Rates.Violent.All'n,
+           abortionratetotal_100k, abortionstotal, abortionratetotal,
+           birthstotal, birthratetotal,
+           pregnanciestotal, pregnancyratetotal,
+           population1544
+    from merged_data       
+    where state in ('CA', 'TX') and missing_abortion = 0
+    order by state, year;
+quit;
+
+/* proc means data=abortions_clean min max; var year; run;
+proc means data=crimes_clean min max; var year; run; */
+
+/* proc freq data=merged_data;
+    tables state * missing_abortion / norow nocol nopercent; */
+/* only 3 observations for each state in abortions match with state crime. US has 27 observations */
+run;
+
+proc univariate data=merged_data;
+    var abortionratetotal_100k total_crime_rate;
+run;
+
+proc corr data=merged_data pearson spearman;
+    var abortionratetotal_100k total_crime_rate;
+run;
+
+proc sgplot data=merged_data;
+    scatter x=abortionratetotal_100k y=total_crime_rate;
+    reg x=abortionratetotal_100k y=total_crime_rate;
+run;
+
+proc sgplot data=merged_data;
+    where state in ('CA', 'TX');
+    series x=year y=total_crime_rate / name="crime" lineattrs=(color=red thickness=2);
+    series x=year y=abortionratetotal_100k / y2axis name="abortion"
+           lineattrs=(color=blue thickness=2 pattern=dash);
+    xaxis label="Crime Observation Year";
+    yaxis label="Total Crime Rate (per 100k)";
+    y2axis label="Abortion Rate (per 100k), 18 Years Prior";
+    keylegend "crime" "abortion";
+run;
+
+
+proc corr data=merged_data pearson spearman;
+    where state ne 'US' and missing_abortion = 0;
+    var abortionratetotal_100k total_crime_rate;
+run;
+
+
+/* proc freq data=abortions;
+    where state ne 'US' and year <= 1999 and not missing(abortionstotal);
+    tables year;
+run; */
+
+
+/* linear regression analysis with confidence interval */
+proc surveyreg data=merged_data;
+    where state ne 'US' and missing_abortion = 0;
+    cluster state;
+    class state year;
+    model total_crime_rate = abortionratetotal_100k state year / solution;
+run;
+
+/* skewness and kurtosis */
+proc means data=merged_data n mean median std skewness kurtosis maxdec=3;
+    where state in ('CA', 'TX');
+    class state;
+    var total_crime_rate abortionratetotal_100k;
+run;
+
+/* distributions of total_abortion_100k and total_crime_rate for CA and TX., as well as other tests */
+proc sort data=merged_data out=ca_tx;
+    where state in ('CA', 'TX');
+    by state;
+run;
+
+data ca_tx;
+    set merged_data;
+    where state in ('CA', 'TX');
+    log_crime_rate = log(total_crime_rate);
+run;
+
+proc univariate data=ca_tx normal;
+    by state;
+    var total_crime_rate abortionratetotal_100k;
+    histogram total_crime_rate abortionratetotal_100k / normal;
+run;
+
+/* merged data set without lag */
+data abortions_nolag;
+    set abortions;
+    where 1985 <= year <= 2020;
+
+    if population1544 > 0 then
+        abortionratetotal_100k = (abortionstotal / population1544) * 100000;
+
+    state = upcase(strip(state));
+run;
+
+proc sort data=abortions_nolag; by state year; run;
+/* crimes_clean is already sorted by state year from earlier */
+
+/* Merge */
+data merged_nolag;
+    merge abortions_nolag(in=a)
+          crimes_clean(in=b);
+    by state year;
+    if b;
+    if missing(abortionratetotal_100k) then missing_abortion = 1;
+    else missing_abortion = 0;
+run;
+
+
+
+/* these datasets include cohort year columns, time lags include 0, 5, 10, 18, 20 */
+
+
+data merged_data;
+    set merged_data;
+    cohort_lag = &lag_years.;  /* equals &lag_years. where abortion data exists */
+run;
+
+data abortions_nolag;
+    set abortions;
+    where 1985 <= year <= 2020;
+    cohort_year = year;
+    if population1544 > 0 then
+        abortionratetotal_100k = (abortionstotal / population1544) * 100000;
+    state = upcase(strip(state));
+run;
+
+proc sort data=abortions_nolag; by state year; run;
+proc sort data=crimes_clean;    by state year; run;
+
+data merged_nolag;
+    merge abortions_nolag(in=a) crimes_clean(in=b);
+    by state year;
+    if b;
+    missing_abortion = missing(abortionratetotal_100k);
+    cohort_lag = year - cohort_year;   /* 0 where matched */
+run;
+
+%macro build_lags(lags);
+    %local i lag;
+    proc datasets library=work nolist; delete merged_all_lags; quit;
+
+    %do i = 1 %to %sysfunc(countw(&lags));
+        %let lag = %scan(&lags, &i);
+
+        data ab_tmp;
+            set abortions;
+            where (1985 - &lag.) <= year <= (2020 - &lag.);
+            cohort_year = year;
+            if population1544 > 0 then
+                abortionratetotal_100k = (abortionstotal / population1544) * 100000;
+            state = upcase(strip(state));
+            year  = year + &lag.;
+        run;
+
+        proc sort data=ab_tmp; by state year; run;
+
+        data m_tmp;
+            merge ab_tmp(in=a) crimes_clean(in=b);
+            by state year;
+            if b;
+            cohort_lag = &lag.;
+            missing_abortion = missing(abortionratetotal_100k);
+        run;
+
+        proc append base=merged_all_lags data=m_tmp force; run;
+    %end;
+%mend;
+
+%build_lags(0 5 10 15 18 20)
+
+proc freq data=merged_all_lags;
+    where state ne 'US' and missing_abortion = 0;
+    tables cohort_lag;
+run;
+
+proc sort data=merged_all_lags; 
+	by cohort_lag; 
+run;
+
+proc corr data=merged_all_lags pearson spearman;
+    where state ne 'US' and missing_abortion = 0;
+    by cohort_lag;
+    var abortionratetotal_100k total_crime_rate;
+run;
+
+proc print data=merged_all_lags noobs;
+    where state in ('CA', 'TX') and missing_abortion = 0;
+    var state cohort_lag cohort_year year
+        abortionratetotal_100k total_crime_rate 'Data.Rates.Property.All'n 'Data.Rates.Violent.All'n
+           abortionratetotal_100k abortionstotal abortionratetotal
+           birthstotal birthratetotal
+           pregnanciestotal pregnancyratetotal
+           population1544;
+run;
+
+proc print data=merged_all_lags noobs;
+    where state in ('CA', 'TX', 'AL', 'NY') 
+    and cohort_year in (18, 20)
+    and missing_abortion = 0;
+    var state cohort_lag cohort_year year
+        abortionratetotal_100k total_crime_rate 'Data.Rates.Property.All'n 'Data.Rates.Violent.All'n
+           abortionratetotal_100k abortionstotal abortionratetotal
+           birthstotal birthratetotal
+           pregnanciestotal pregnancyratetotal
+           population1544;
+run;
