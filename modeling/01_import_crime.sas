@@ -1,11 +1,11 @@
 /* Step 1: Import and prepare crime data.
-   Set data_dir to your own SAS Studio server folder.
+   The directory below matches the user's SAS OnDemand project folder.
    Use VALIDVARNAME=ANY to preserve the CSV column names.
    This program assumes the crime numeric-looking fields import as
    character, as observed in the project SAS Studio session.
    Check PROC CONTENTS before the conversion if import types change.
 */
-%let data_dir=/home/YOUR_SAS_USER/abortion_crime_modeling;
+%let data_dir=/home/u64600878/abortion_crime_modeling;
 options validvarname=any;
 
 proc import datafile="&data_dir./NationalAndStatePregnancy_PublicUse.csv"
