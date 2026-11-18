@@ -22,3 +22,13 @@ proc glm data=model_data; /* glm: general linear models*/
 
 run;
 quit;
+
+/* Fixed effects with clustered standard errors*/
+
+proc surveyreg data=model_data; /* using survey-design variance estimation*/
+	cluster state_code;
+	class state_code year;
+	
+	model total_crime_rate = abortion_rate state_code year/solution;
+
+run;
