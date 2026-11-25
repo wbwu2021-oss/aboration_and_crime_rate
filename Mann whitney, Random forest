@@ -1,0 +1,118 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import mannwhitneyu
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+df_state_crime = pd.read_csv('/content/state_crime.csv')
+df_us_crime = pd.read_csv('/content/US_Crime_Rates_1960_2014.csv')
+df_abort = pd.read_csv('/content/NationalAndStatePregnancy_PublicUse.csv')
+
+state_map = {
+    'California': 'CA',
+    'Texas': 'TX',
+    'Alabama': 'AL',
+    'New York': 'NY',
+    'United States': 'US'
+}
+target_states = ['CA', 'TX', 'AL', 'NY', 'US']
+
+sc = df_state_crime.copy()
+sc['state'] = sc['State'].map(state_map)
+sc = sc[sc['state'].isin(['CA', 'TX', 'AL', 'NY'])].copy()
+sc = sc[['state', 'Year', 'Data.Rates.Violent.All', 'Data.Rates.Property.All', 'Data.Population']]
+sc.columns = ['state', 'year', 'violent_rate', 'property_rate', 'population']
+sc['total_crime_rate'] = sc['violent_rate'] + sc['property_rate']
+
+usc = df_us_crime.copy()
+usc.columns = [c.strip().lower().replace(' ', '_') for c in usc.columns]
+year_col = 'year' if 'year' in usc.columns else usc.columns[0]
+pop_col = [c for c in usc.columns if 'pop' in c][0]
+viol_col = [c for c in usc.columns if 'violent' in c][0]
+prop_col = [c for c in usc.columns if 'property' in c][0]
+
+us_clean = pd.DataFrame({
+    'state': 'US',
+    'year': usc[year_col],
+    'population': usc[pop_col],
+    'violent_rate': (usc[viol_col] / usc[pop_col]) * 100000,
+    'property_rate': (usc[prop_col] / usc[pop_col]) * 100000
+})
+us_clean['total_crime_rate'] = us_clean['violent_rate'] + us_clean['property_rate']
+
+df_crime_all = pd.concat([sc, us_clean], ignore_index=True)
+
+ab = df_abort[df_abort['state'].isin(target_states)].copy()
+ab['abortionratetotal_100k'] = ab['abortionratetotal'] * 100
+ab['birthrate_100k'] = ab['birthrate'] * 100 if 'birthrate' in ab.columns else np.nan
+ab = ab[['state', 'year', 'abortionratetotal_100k', 'birthrate_100k']].dropna(subset=['abortionratetotal_100k'])
+
+ab_lag20 = ab.copy()
+ab_lag20['crime_year'] = ab_lag20['year'] + 20
+
+df_merged = pd.merge(
+    ab_lag20,
+    df_crime_all,
+    left_on=['state', 'crime_year'],
+    right_on=['state', 'year'],
+    suffixes=('_abort_yr', '_crime_yr')
+).dropna(subset=['total_crime_rate', 'abortionratetotal_100k'])
+
+pre_2005 = df_merged[df_merged['crime_year'] < 2005]['total_crime_rate']
+post_2005 = df_merged[df_merged['crime_year'] >= 2005]['total_crime_rate']
+u_stat, p_val = mannwhitneyu(pre_2005, post_2005, alternative='two-sided')
+
+df_rf = df_merged.sort_values('crime_year').copy()
+df_rf['state_code'] = df_rf['state'].astype('category').cat.codes
+df_rf['birthrate_100k'] = df_rf['birthrate_100k'].fillna(df_rf['birthrate_100k'].median())
+
+features = ['abortionratetotal_100k', 'birthrate_100k', 'population', 'year_abort_yr', 'state_code']
+target = 'total_crime_rate'
+
+split_idx = int(len(df_rf) * 0.8)
+X_train, X_test = df_rf.iloc[:split_idx][features], df_rf.iloc[split_idx:][features]
+y_train, y_test = df_rf.iloc[:split_idx][target], df_rf.iloc[split_idx:][target]
+
+rf = RandomForestRegressor(n_estimators=300, random_state=42)
+rf.fit(X_train, y_train)
+preds = rf.predict(X_test)
+
+rmse = np.sqrt(mean_squared_error(y_test, preds))
+mae = mean_absolute_error(y_test, preds)
+
+sns.set_theme(style="whitegrid", context="talk")
+fig, axes = plt.subplots(1, 2, figsize=(16, 7), dpi=300)
+
+sns.boxplot(
+    x=['Pre-2005 Cohort' if x < 2005 else 'Post-2005 Cohort' for x in df_merged['crime_year']],
+    y=df_merged['total_crime_rate'],
+    ax=axes[0],
+    palette="Set2",
+    hue=['Pre-2005 Cohort' if x < 2005 else 'Post-2005 Cohort' for x in df_merged['crime_year']],
+    legend=False
+)
+sns.stripplot(
+    x=['Pre-2005 Cohort' if x < 2005 else 'Post-2005 Cohort' for x in df_merged['crime_year']],
+    y=df_merged['total_crime_rate'],
+    ax=axes[0],
+    color="black",
+    alpha=0.5,
+    size=6
+)
+axes[0].set_title(f"Mann-Whitney U Test\n(U-stat: {u_stat:.1f}, p-value: {p_val:.5f})")
+axes[0].set_ylabel("Total Crime Rate (per 100k)")
+
+axes[1].scatter(y_test, preds, color="teal", s=100, alpha=0.8, edgecolors="white")
+lims = [min(y_test.min(), preds.min()) * 0.95, max(y_test.max(), preds.max()) * 1.05]
+axes[1].plot(lims, lims, color="crimson", linestyle="--", linewidth=2)
+axes[1].set_xlim(lims)
+axes[1].set_ylim(lims)
+axes[1].set_title(f"Random Forest Regressor Fit\n(RMSE: {rmse:.1f}, MAE: {mae:.1f})")
+axes[1].set_xlabel("Observed Total Crime Rate (per 100k)")
+axes[1].set_ylabel("Predicted Total Crime Rate (per 100k)")
+
+plt.tight_layout()
+plt.savefig("mann_whitney_and_random_forest_results.png", dpi=300, bbox_inches="tight")
+plt.show()
