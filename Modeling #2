@@ -1,0 +1,139 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+
+# Dataset 1: State Crime (CORGIS / DOJ & FBI UCR)
+df_state_crime = pd.read_csv('/content/state_crime.csv')
+
+# Dataset 2: US Crime Rates 1960-2014 (Kaggle dataset)
+df_us_crime = pd.read_csv('/content/US_Crime_Rates_1960_2014.csv')
+
+# Dataset 3: National and State Pregnancy / Abortion (Guttmacher OSF CSV)
+df_abort = pd.read_csv('/content/NationalAndStatePregnancy_PublicUse.csv')
+
+
+state_map = {
+    'California': 'CA', 'Texas': 'TX', 'Alabama': 'AL',
+    'New York': 'NY', 'United States': 'US'
+}
+target_states = ['CA', 'TX', 'AL', 'NY', 'US']
+
+sc = df_state_crime.copy()
+sc['state'] = sc['State'].map(state_map)
+sc = sc[sc['state'].isin(['CA', 'TX', 'AL', 'NY'])].copy()
+sc = sc[['state', 'Year', 'Data.Rates.Violent.All', 'Data.Rates.Property.All', 'Data.Population']]
+sc.columns = ['state', 'year', 'violent_rate', 'property_rate', 'population']
+sc['total_crime_rate'] = sc['violent_rate'] + sc['property_rate']
+
+# Clean US Crime (Kaggle 1960-2014 -> convert totals to rate per 100k)
+usc = df_us_crime.copy()
+# Standardize column names flexibly in case of spaces/caps
+usc.columns = [c.strip().lower().replace(' ', '_') for c in usc.columns]
+year_col = 'year' if 'year' in usc.columns else usc.columns[0]
+pop_col = [c for c in usc.columns if 'pop' in c][0]
+viol_col = [c for c in usc.columns if 'violent' in c][0]
+prop_col = [c for c in usc.columns if 'property' in c][0]
+
+us_clean = pd.DataFrame({
+    'state': 'US',
+    'year': usc[year_col],
+    'population': usc[pop_col],
+    'violent_rate': (usc[viol_col] / usc[pop_col]) * 100000,
+    'property_rate': (usc[prop_col] / usc[pop_col]) * 100000
+})
+us_clean['total_crime_rate'] = us_clean['violent_rate'] + us_clean['property_rate']
+
+# Combine State + US Crime
+df_crime_all = pd.concat([sc, us_clean], ignore_index=True)
+
+# Clean Guttmacher Abortion Data (rate per 1k women 15-44 -> per 100k)
+ab = df_abort[df_abort['state'].isin(target_states)].copy()
+ab['abortionratetotal_100k'] = ab['abortionratetotal'] * 100
+ab = ab[['state', 'year', 'abortionratetotal_100k']].dropna()
+
+# Apply 20-year cohort lag (abortion year + 20 = crime year)
+ab_lag20 = ab.copy()
+ab_lag20['crime_year'] = ab_lag20['year'] + 20
+
+df_model = pd.merge(
+    ab_lag20,
+    df_crime_all,
+    left_on=['state', 'crime_year'],
+    right_on=['state', 'year'],
+    suffixes=('_abort_yr', '_crime_yr')
+)
+
+ols_fit = smf.ols(
+    formula='total_crime_rate ~ abortionratetotal_100k + C(state)',
+    data=df_model
+).fit()
+
+print(ols_fit.summary())
+df_model['fitted'] = ols_fit.fittedvalues
+df_model['residuals'] = ols_fit.resid
+
+sns.set_theme(style="whitegrid", context="talk")
+# Increased size to (18, 8) for maximum clarity and text readability
+fig, axes = plt.subplots(1, 2, figsize=(18, 8), dpi=300)
+
+palette = {
+    'CA': '#1f77b4', 'TX': '#ff7f0e', 'AL': '#2ca02c',
+    'NY': '#d62728', 'US': '#111111'
+}
+markers = {'CA': 'o', 'TX': 's', 'AL': '^', 'NY': 'D', 'US': 'P'}
+
+# Panel A: OLS Fitted vs. Observed Total Crime Rate (20-Yr Lagged Abortion + State)
+for st in target_states:
+    sub = df_model[df_model['state'] == st]
+    axes[0].scatter(
+        sub['fitted'],
+        sub['total_crime_rate'],
+        label=f"{st} (n={len(sub)})",
+        color=palette[st],
+        marker=markers[st],
+        s=95,
+        alpha=0.85,
+        edgecolors='white'
+    )
+
+min_val = min(df_model['fitted'].min(), df_model['total_crime_rate'].min()) * 0.95
+max_val = max(df_model['fitted'].max(), df_model['total_crime_rate'].max()) * 1.05
+axes[0].plot([min_val, max_val], [min_val, max_val], linestyle='--', color='gray', linewidth=2.0, label='45° Ideal Fit Line')
+
+r2_val = ols_fit.rsquared
+axes[0].set_title(f'A. OLS Model Fit: Predicted vs. Actual Crime (R² = {r2_val:.3f})', fontweight='bold', pad=15, fontsize=14)
+axes[0].set_xlabel('OLS Fitted Total Crime Rate (per 100k)', fontsize=12)
+axes[0].set_ylabel('Observed Total Crime Rate (per 100k)', fontsize=12)
+axes[0].legend(loc='upper left', fontsize=11, frameon=True)
+
+for st in target_states:
+    sub = df_model[df_model['state'] == st]
+    axes[1].scatter(
+        sub['fitted'],
+        sub['residuals'],
+        label=st,
+        color=palette[st],
+        marker=markers[st],
+        s=90,
+        alpha=0.85,
+        edgecolors='white'
+    )
+
+axes[1].axhline(0, color='black', linestyle='-', linewidth=1.5)
+axes[1].axhline(df_model['residuals'].std() * 2, color='crimson', linestyle=':', linewidth=1.5, label='±2 SD Reference')
+axes[1].axhline(-df_model['residuals'].std() * 2, color='crimson', linestyle=':')
+
+axes[1].set_title('B. OLS Residual Diagnostics (Homoscedasticity & Outliers)', fontweight='bold', pad=15, fontsize=14)
+axes[1].set_xlabel('OLS Fitted Total Crime Rate (per 100k)', fontsize=12)
+axes[1].set_ylabel('Model Residuals (Observed − Fitted)', fontsize=12)
+axes[1].legend(loc='upper right', fontsize=11, frameon=True)
+
+plt.tight_layout()
+
+fig_name = "ols_statistical_model_diagnostics_continuity.png"
+plt.savefig(fig_name, dpi=300, bbox_inches='tight')
+plt.show()
+print(f"Saved figure as {fig_name}")
