@@ -1,0 +1,101 @@
+ import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 1. LOAD DATASETS FROM LOCAL FILES IN KERNEL
+# State Crime Dataset (Local file in workspace)
+df_crime = pd.read_csv('/content/state_crime.csv')
+
+# Guttmacher CSV (Local file in workspace)
+df_abort = pd.read_csv('/content/NationalAndStatePregnancy_PublicUse.csv')
+
+# 2. STANDARDIZE & CLEAN DATA FOR CONTINUITY (CA, TX, AL, NY, US)
+state_map = {
+    'California': 'CA', 'Texas': 'TX', 'Alabama': 'AL',
+    'New York': 'NY', 'United States': 'US'
+}
+target_states = ['CA', 'TX', 'AL', 'NY', 'US']
+
+# Clean State Crime Data
+df_crime['state'] = df_crime['State'].map(state_map)
+df_crime = df_crime[df_crime['state'].isin(target_states)].copy()
+df_crime = df_crime[['state', 'Year', 'Data.Rates.Violent.All', 'Data.Rates.Property.All', 'Data.Population']]
+df_crime.columns = ['state', 'year', 'violent_rate', 'property_rate', 'population']
+df_crime['total_crime_rate'] = df_crime['violent_rate'] + df_crime['property_rate']
+
+# Clean Guttmacher Abortion Data (rates per 1,000 women 15-44 -> convert to per 100k to match your SAS tables)
+df_abort = df_abort[df_abort['state'].isin(target_states)].copy()
+df_abort['abortionratetotal_100k'] = df_abort['abortionratetotal'] * 100
+df_abort = df_abort[['state', 'year', 'abortionratetotal_100k']].dropna()
+
+# 3. CREATE 20-YEAR COHORT LAG MERGE (Abortion Year + 20 = Crime Year)
+df_abort_lag20 = df_abort.copy()
+df_abort_lag20['crime_year'] = df_abort_lag20['year'] + 20
+
+df_merged_lag20 = pd.merge(
+    df_abort_lag20,
+    df_crime,
+    left_on=['state', 'crime_year'],
+    right_on=['state', 'year'],
+    suffixes=('_abortion', '_crime')
+)
+
+# 4. GENERATE MULTI-PANEL CONTINUITY FIGURE (FOR REPORT & GITHUB)
+sns.set_theme(style="whitegrid", context="talk")
+fig, axes = plt.subplots(1, 2, figsize=(16, 6.5), dpi=300)
+
+# Color palette consistent across both panels
+palette = {'CA': '#1f77b4', 'TX': '#ff7f0e', 'AL': '#2ca02c', 'NY': '#d62728', 'US': '#000000'}
+
+# Panel A: Violent Crime Rate Trajectory with Roe v. Wade & First Post-Roe Cohort Shaded
+for st in target_states:
+    subset = df_crime[(df_crime['state'] == st) & (df_crime['year'] >= 1965)]
+    lw = 3.0 if st == 'US' else 1.8
+    ls = '--' if st == 'US' else '-'
+    axes[0].plot(subset['year'], subset['violent_rate'], label=st, color=palette[st], linewidth=lw, linestyle=ls)
+
+axes[0].axvline(1973, color='gray', linestyle=':', linewidth=1.5)
+axes[0].text(1973.5, 1050, 'Roe v. Wade (1973)', color='dimgray', fontsize=10, rotation=90)
+axes[0].axvspan(1991, 1999, color='orange', alpha=0.15, label='First Post-Roe Cohort (Ages 18–26)')
+axes[0].set_title('A. Violent Crime Rate Trajectories (1965–2019)', fontweight='bold', pad=12)
+axes[0].set_xlabel('Year')
+axes[0].set_ylabel('Violent Crime Rate (per 100k)')
+axes[0].legend(loc='upper right', fontsize=9, frameon=True)
+
+# Panel B: 20-Year Lagged Association (Abortion Rate vs. Violent Crime Rate 20 Yrs Later)
+for st in ['CA', 'TX', 'AL', 'NY']:
+    sub_lag = df_merged_lag20[df_merged_lag20['state'] == st]
+    axes[1].scatter(
+        sub_lag['abortionratetotal_100k'],
+        sub_lag['violent_rate'],
+        label=f"{st} (Lag 20)",
+        color=palette[st],
+        s=75,
+        alpha=0.85,
+        edgecolors='w'
+    )
+
+# Add overall OLS trendline across the lagged state observations
+sns.regplot(
+    data=df_merged_lag20[df_merged_lag20['state'] != 'US'],
+    x='abortionratetotal_100k',
+    y='violent_rate',
+    scatter=False,
+    ax=axes[1],
+    color='navy',
+    line_kws={'label': 'OLS Linear Fit (95% CI)', 'linewidth': 2}
+)
+
+axes[1].set_title('B. 20-Year Lag: Abortion Rate vs. Subsequent Violent Crime', fontweight='bold', pad=12)
+axes[1].set_xlabel('Abortion Rate per 100k Women (Year $t$)')
+axes[1].set_ylabel('Violent Crime Rate per 100k (Year $t + 20$)')
+axes[1].legend(loc='upper right', fontsize=9, frameon=True)
+
+plt.tight_layout()
+
+# Save high-res figure for your GitHub repository & Final Written Report
+output_filename = "abortion_crime_lag20_continuity.png"
+plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+plt.show()
+print(f"Saved figure successfully as {output_filename}")
